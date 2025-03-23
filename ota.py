@@ -1,5 +1,6 @@
 import urequests
 import os
+import ujson  # Import ujson for JSON handling
 
 class OTAUpdater:
     def __init__(self, ssid, password, firmware_url):
