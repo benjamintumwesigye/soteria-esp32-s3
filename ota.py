@@ -26,6 +26,7 @@ class OTAUpdater:
 
     def _get_version_info(self):
         try:
+            print(f"{self.firmware_url}/version.json")
             response = urequests.get(f"{self.firmware_url}/version.json")
             if response.status_code == 200:
                 return response.json()

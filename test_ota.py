@@ -3,7 +3,7 @@ from utils import load_config
 
 config = load_config()
 
-firmware_url = "https://github.com/benjamintumwesigye/ota/"
+firmware_url = "https://raw.githubusercontent.com/benjamintumwesigye/ota/main"
 
 # Load Wi-Fi credentials
 if config:
