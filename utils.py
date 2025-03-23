@@ -116,8 +116,9 @@ def get_mac_address():
 
 def device_mode():
     mode = ""
-    if config.get('test_mode') is True:
-        mode= "Production"
+    config = load_config()
+    if config.get('test_mode') is False:
+        mode = "Production"
     else:
         mode = "Maintenance"
     return mode     

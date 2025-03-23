@@ -57,8 +57,14 @@ class OTAUpdater:
         for file in files:
             print(f"Updating {file}...")
             try:
+                # Check if the file exists locally
+                if not os.path.exists(file):
+                    print(f"{file} does not exist locally. Creating it...")
+
+                # Fetch the file from the repository
                 response = urequests.get(f"{self.firmware_url}/{file}")
                 if response.status_code == 200:
+                    # Write the file contents to the local file system
                     with open(file, "w") as f:
                         f.write(response.text)
                     print(f"{file} updated successfully.")

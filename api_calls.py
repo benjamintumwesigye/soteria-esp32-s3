@@ -1,14 +1,18 @@
 import urequests
 import uasyncio as asyncio
-import network
-import time
 import json
-import ujson
 from wifi_connect import connect_to_wifi
 from utils import *
 from time_sync import get_current_datetime_string
 
-headers = {'Content-Type': 'application/json','User-Agent': 'Mozilla/5.0 (platform; rv:gecko-version) Gecko/gecko-trail Firefox/firefox-version'}
+# Constants
+BASE_URL = "https://erp.arxcess.com/arxcess-erp-api"
+PING_URL = f"{BASE_URL}/open-accommodation-machines/ping"
+EMERGENCIES_URL = f"{BASE_URL}/open-accommodation-machines/emergencies"
+HEADERS = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'Mozilla/5.0 (platform; rv:gecko-version) Gecko/gecko-trail Firefox/firefox-version'
+}
 
 async def send_alarm_to_mother(room):
     """
@@ -18,7 +22,7 @@ async def send_alarm_to_mother(room):
     if not config:
         print("Failed to load configuration.")
         return
-    
+
     block_name = config.get('block_name')
     mother_ips_str = config.get('mothers')  # Get the mother IPs as a string
 
@@ -47,7 +51,6 @@ async def send_alarm_to_mothers(block_name, room, mother_ips, retries=2, delay=1
     Asynchronously sends alarms to multiple mother devices and updates the configuration.
     """
     datetime_str = get_current_datetime_string()
-    headers = {'Content-Type': 'application/json'}
 
     for ip in mother_ips:
         url = f"http://{ip}/api/mother/alarm"
@@ -65,7 +68,7 @@ async def send_alarm_to_mothers(block_name, room, mother_ips, retries=2, delay=1
         for attempt in range(1, retries + 1):
             try:
                 print(f"Attempt {attempt}: Sending alarm to mother server at {ip}...")
-                response = urequests.put(url, data=json.dumps(payload), headers=headers)
+                response = urequests.put(url, data=json.dumps(payload), headers=HEADERS)
                 if response.status_code == 200:
                     isSent = True
                     print(f"Successfully sent alarm to {ip}: {response.status_code} - {response.text}")
@@ -80,7 +83,7 @@ async def send_alarm_to_mothers(block_name, room, mother_ips, retries=2, delay=1
             # Wait before the next retry
             await asyncio.sleep(delay)
 
-        # Update 'last_alarm' in config
+        # Update 'last_alarm' in config regardless of success or failure
         await update_last_alarm(room, datetime_str, reference, isSent)
         
         # Yield control to the event loop
@@ -101,11 +104,12 @@ async def update_last_alarm(room, datetime_str, reference, isSent):
         
     # Create the alarm entry
     alarm_entry = {
-        "room": room,
-        "date": datetime_str,
+        "roomName": room,
+        "alarmTime": datetime_str,
         "reference": reference,
         "isSent": isSent,
-        "mode": device_mode()
+        "mode": device_mode(),
+        "synced": False
     }
 
     # Append the new alarm entry
@@ -117,38 +121,40 @@ async def update_last_alarm(room, datetime_str, reference, isSent):
         save_config(config)
     except Exception as e:
         print(f"Error updating 'last_alarm' in configuration: {e}")
-  
-  
+
 async def ping_server_call(retries=1, backoff_factor=2):
-   
-    url = "https://demo.erp.arxcess.com/arxcess-erp-api/open-accommodation-machines/ping"
+    """
+    Sends a ping to the server to check connectivity.
+    """
     config = load_config()
-    
     if not config:
         print("Failed to load configuration.")
         return False
-    
+
     code = config.get('machine_code')
     token = config.get('machine_token')
     ipAddress = config.get('ip_address')
     mac_address = get_mac_address()
-    
+    rooms = config.get('number_of_rooms')
+
     if not code or not token or not ipAddress:
         print("Machine code or token missing in configuration.")
         return False
-    
+
     payload = {
-        "ipAddress": ipAddress
+        "ipAddress": ipAddress,
+        "mac_address": mac_address,
+        "rooms": rooms
     }
-    full_url = f"{url}?code={code}&token={token}&mac_address={mac_address}"
-    
+    full_url = f"{PING_URL}?code={code}&token={token}"
+
     print(f"Pinging server at: {full_url}")
-    
+
     delay = 1  # Initial delay in seconds
-    
+
     for attempt in range(1, retries + 1):
         try:
-            response = urequests.put(full_url,data=json.dumps(payload),headers=headers)
+            response = urequests.put(full_url, data=json.dumps(payload), headers=HEADERS)
             if response.status_code == 200:
                 print("Ping successful:", response.text)
                 response.close()
@@ -158,31 +164,96 @@ async def ping_server_call(retries=1, backoff_factor=2):
                 response.close()
         except Exception as e:
             print(f"Error during ping (Attempt {attempt}): {e}")
-        
+
         if attempt < retries:
             print(f"Retrying in {delay} seconds...")
             await asyncio.sleep(delay)
             delay *= backoff_factor  # Exponential backoff
-    
+
     print("All ping attempts failed.")
+    send_alarms_to_cloud()
     return False
 
+async def send_alarms_to_cloud(retries=1, backoff_factor=2):
+    """
+    Sends unsynced alarms to the cloud and updates their synced status based on the response.
+    """
+    config = load_config()
+    if not config:
+        print("Failed to load configuration.")
+        return False
 
-async def periodic_ping(interval=360):
+    code = config.get('machine_code')
+    token = config.get('machine_token')
+
+    if not code or not token:
+        print("Machine code or token missing in configuration.")
+        return False
+
+    # Filter unsynced alarms
+    unsynced_alarms = [alarm for alarm in config.get('last_alarm', []) if not alarm.get('synced', False)]
+
+    if not unsynced_alarms:
+        print("No unsynced alarms to send.")
+        return True
+
+    payload = unsynced_alarms
+    full_url = f"{EMERGENCIES_URL}?code={code}&token={token}"
+
+    print(f"Sending unsynced alarms to: {full_url}")
+    print(f"Payload: {json.dumps(payload)}")
+
+    delay = 1  # Initial delay in seconds
+
+    for attempt in range(1, retries + 1):
+        try:
+            response = urequests.post(full_url, data=json.dumps(payload), headers=HEADERS)
+            if response.status_code == 200:
+                print("Alarms sent successfully:", response.text)
+                # Parse the response to get the list of synced references
+                synced_references = response.json()
+
+                # Update the synced status of alarms in the configuration
+                for alarm in config['last_alarm']:
+                    if alarm['reference'] in synced_references:
+                        alarm['synced'] = True
+
+                # Save the updated configuration
+                save_config(config)
+                response.close()
+                return True
+            else:
+                print(f"Failed to send alarms with status {response.status_code}: {response.text}")
+                response.close()
+        except Exception as e:
+            print(f"Error during alarm sync (Attempt {attempt}): {e}")
+
+        if attempt < retries:
+            print(f"Retrying in {delay} seconds...")
+            await asyncio.sleep(delay)
+            delay *= backoff_factor  # Exponential backoff
+
+    print("All attempts to send alarms failed.")
+    return False
+
+async def periodic_ping(interval=60):
+    """
+    Periodically pings the server and sends unsynced alarms to the cloud.
+    """
     while True:
         print("Starting periodic ping...")
         success = await ping_server_call()
         if success:
             print("Periodic ping successful.")
+            # Call send_alarms_to_cloud after a successful ping
+            print("Sending unsynced alarms to the cloud...")
+            alarms_sent = await send_alarms_to_cloud()
+            if alarms_sent:
+                print("Unsynced alarms sent successfully.")
+            else:
+                print("Failed to send unsynced alarms.")
         else:
-            print("Periodic ping failed.")
-        
+            print("Periodic ping failed. Skipping alarm sync.")
+
         print(f"Waiting for {interval} seconds before next ping.")
         await asyncio.sleep(interval)
-
-
-
-
-
-
-
