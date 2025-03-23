@@ -8,8 +8,9 @@ from time_sync import get_current_datetime_string
 # Constants
 BASE_URL = "https://erp.arxcess.com/arxcess-erp-api"
 PING_URL = f"{BASE_URL}/open-accommodation-machines/ping"
-EMERGENCIES_URL = f"{BASE_URL}/open-accommodation-machines/emergencies"
+EMERGENCIES_URL = f"{BASE_URL}/open-accommodation-machines/sync-emergencies"
 HEADERS = {
+    'accept': 'application/json',
     'Content-Type': 'application/json',
     'User-Agent': 'Mozilla/5.0 (platform; rv:gecko-version) Gecko/gecko-trail Firefox/firefox-version'
 }
@@ -38,7 +39,7 @@ async def send_alarm_to_mother(room):
     connected = connect_to_wifi()
     if not connected:
         print("Cannot proceed without Wi-Fi connection.")
-        return
+        
 
     # Split mother IPs into a list
     mother_ips = [ip.strip() for ip in mother_ips_str.split(',')]
@@ -136,6 +137,7 @@ async def ping_server_call(retries=1, backoff_factor=2):
     ipAddress = config.get('ip_address')
     mac_address = get_mac_address()
     rooms = config.get('number_of_rooms')
+    firmware_version = get_firmware_version()
 
     if not code or not token or not ipAddress:
         print("Machine code or token missing in configuration.")
@@ -144,11 +146,13 @@ async def ping_server_call(retries=1, backoff_factor=2):
     payload = {
         "ipAddress": ipAddress,
         "mac_address": mac_address,
-        "rooms": rooms
+        "rooms": rooms,
+        "firmware_version": firmware_version
     }
     full_url = f"{PING_URL}?code={code}&token={token}"
 
     print(f"Pinging server at: {full_url}")
+    print(f"Payload: {json.dumps(payload)}")
 
     delay = 1  # Initial delay in seconds
 
@@ -175,9 +179,6 @@ async def ping_server_call(retries=1, backoff_factor=2):
     return False
 
 async def send_alarms_to_cloud(retries=1, backoff_factor=2):
-    """
-    Sends unsynced alarms to the cloud and updates their synced status based on the response.
-    """
     config = load_config()
     if not config:
         print("Failed to load configuration.")
@@ -197,28 +198,50 @@ async def send_alarms_to_cloud(retries=1, backoff_factor=2):
         print("No unsynced alarms to send.")
         return True
 
-    payload = unsynced_alarms
-    full_url = f"{EMERGENCIES_URL}?code={code}&token={token}"
+    # Convert booleans to strings to avoid serialization issues
+    modified_alarms = []
+    for alarm in unsynced_alarms:
+        modified_alarm = {}
+        for key, value in alarm.items():
+            if isinstance(value, bool):
+                modified_alarm[key] = str(value).lower()  # Convert True/False to "true"/"false"
+            else:
+                modified_alarm[key] = value
+        modified_alarms.append(modified_alarm)
 
-    print(f"Sending unsynced alarms to: {full_url}")
-    print(f"Payload: {json.dumps(payload)}")
+    # Serialize the payload
+    payload_str = ujson.dumps(modified_alarms)
+    # Convert to UTF-8 encoded bytes
+    payload_bytes = payload_str.encode('utf-8')
+    # Strip any trailing null bytes or whitespace
+    payload_bytes = payload_bytes.rstrip(b'\x00').rstrip()
+
+    # Explicitly set Content-Length in headers
+    headers = HEADERS.copy()  # Copy the default headers
+    headers['Content-Length'] = str(len(payload_bytes))
+
+    full_url = f"{EMERGENCIES_URL}?code={code}&token={token}"
 
     delay = 1  # Initial delay in seconds
 
     for attempt in range(1, retries + 1):
         try:
-            response = urequests.post(full_url, data=json.dumps(payload), headers=HEADERS)
+            response = urequests.post(full_url, data=payload_bytes, headers=headers)
+            print(f"Response Status: {response.status_code}")
+            print(f"Response Text: {response.text}")
+
             if response.status_code == 200:
                 print("Alarms sent successfully:", response.text)
-                # Parse the response to get the list of synced references
-                synced_references = response.json()
+                try:
+                    synced_references = response.json()
+                except Exception as e:
+                    print(f"Failed to parse response as JSON: {e}")
+                    synced_references = []
 
-                # Update the synced status of alarms in the configuration
                 for alarm in config['last_alarm']:
                     if alarm['reference'] in synced_references:
                         alarm['synced'] = True
 
-                # Save the updated configuration
                 save_config(config)
                 response.close()
                 return True
@@ -231,7 +254,7 @@ async def send_alarms_to_cloud(retries=1, backoff_factor=2):
         if attempt < retries:
             print(f"Retrying in {delay} seconds...")
             await asyncio.sleep(delay)
-            delay *= backoff_factor  # Exponential backoff
+            delay *= backoff_factor
 
     print("All attempts to send alarms failed.")
     return False

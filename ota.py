@@ -21,8 +21,8 @@ class OTAUpdater:
             print(f"New version available: {version_info['version']}")
             self._update_files(version_info["files"])
             self._set_current_version(version_info["version"])
-            print("Update complete. Rebooting device...")
-            machine.reset()  # Reboot the ESP32
+            print("Update complete. Restarting program...")
+            self._soft_reboot()  # Perform a soft reboot
         else:
             print("No updates available.")
 
@@ -58,7 +58,13 @@ class OTAUpdater:
             print(f"Updating {file}...")
             try:
                 # Check if the file exists locally
-                if not os.path.exists(file):
+                file_exists = True
+                try:
+                    os.stat(file)  # Check if the file exists
+                except OSError:
+                    file_exists = False
+
+                if not file_exists:
                     print(f"{file} does not exist locally. Creating it...")
 
                 # Fetch the file from the repository

@@ -16,7 +16,7 @@ from styles import *
 gc.collect()
 
 
-ap_ssid = 'ARX-RING 241'
+ap_ssid = 'SOTERIA-241'
 ap_password = '123456789'
 
 def url_decode(s, iterations=2):
@@ -141,9 +141,6 @@ def web_page_config(status_messages):
     machine_code = config.get('machine_code', '')
     machine_token = config.get('machine_token', '')
 
-    # Debugging: Print the loaded additional configurations
-    print("Loaded additional configurations:", config)
-
     # Convert boolean to checked attribute
     isMother_checked = 'checked' if isMother else ''
     test_mode_checked = 'checked' if test_mode else ''
@@ -202,20 +199,26 @@ def web_page_config(status_messages):
                 <th>Room</th>
                 <th>Date</th>
                 <th>Reference</th>
-                <th>Status</th>
+                <th>Mode</th>
+                <th>Synced</th>
+                <th>Sent to Mother</th>
             </tr>
         """
         for alarm in last_alarm:
             if isinstance(alarm, dict):
-                room = alarm.get('room', 'N/A')
-                date = alarm.get('date', 'N/A')
+                room = alarm.get('roomName', 'N/A')
+                date = alarm.get('alarmTime', 'N/A')
                 reference = alarm.get('reference','N/A')
-                status = 'Yes' if alarm.get('status', True) else 'No'
+                mode = alarm.get('mode','N/A')
+                synced = alarm.get('synced','N/A')
+                status = 'Yes' if alarm.get('isSent', True) else 'No'
                 last_alarms_html += f"""
                     <tr>
                         <td>{room}</td>
                          <td>{date}</td>
                          <td>{reference}</td>
+                          <td>{mode}</td>
+                          <td>{synced}</td>
                         <td>{status}</td>
                     </tr>
                 """
@@ -475,9 +478,7 @@ async def handle_client(reader, writer):
             mothers = params.get('mothers', '')
             center_name = params.get('center_name', '')
             block_name = params.get('block_name', '')
-            last_alarm = params.get('last_alarm', '')
             number_of_rooms = params.get('number_of_rooms', '')
-            mother_alarm = params.get('mother_alarm', '')
             machine_code = params.get('machine_code', '')
             machine_token = params.get('machine_token', '')
             
@@ -496,15 +497,12 @@ async def handle_client(reader, writer):
                 config['isMother'] = isMother
                 config['center_name'] = center_name
                 config['block_name'] = block_name
-                config['last_alarm'] = last_alarm
                 config['number_of_rooms'] = number_of_rooms
-                config['mother_alarm'] = mother_alarm
                 config['test_mode'] = test_mode
                 config['machine_code'] = machine_code
                 config['machine_token'] = machine_token
                 save_config(config)
                 status_messages.append('Additional configurations updated successfully.')
-                print('Additional configurations updated:', config)         
                 asyncio.create_task(defaultDisplay())
             else:
                 status_messages.append('Failed to load existing configuration.')

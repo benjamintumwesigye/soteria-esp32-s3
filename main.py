@@ -82,6 +82,7 @@ async def set_alarm(room):
         await asyncio.sleep(2)
         SIREN_PIN.value(0)
         ALARM_ON = False
+        await send_alarm_to_mother(room)
         await defaultDisplay()
 
 async def set_mother_alarm():
@@ -99,17 +100,7 @@ async def set_mother_alarm():
                 global ALARM_ON
                 ALARM_ON = True
                 SIREN_PIN.value(1)  # Turn the Siren on
-
-                # Ensure TEST_MODE is defined
-                TEST_MODE = config.get('mode') == 'Maintenance'
-
                 await mother_alarm_msg(alarm.get('block_name'), alarm.get('room'))
-                
-                if TEST_MODE:
-                    await asyncio.sleep(3)
-                    SIREN_PIN.value(0)
-                    await defaultDisplay()
-                    ALARM_ON = False 
                 break
 
      

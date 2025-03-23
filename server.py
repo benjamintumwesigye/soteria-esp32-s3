@@ -59,10 +59,12 @@ def mother_alarm_handler(httpClient, httpResponse):
         room = data.get('room')
         date = data.get('date')
         reference = data.get('reference')
+        mode = data.get('mode')
 
         if block_name and room:
             print(f"Received alarm from Block: {block_name}, Room: {room}")
-                # Load the existing config
+
+            # Load the existing config
             config = load_config()
             if config is None:
                 # Handle error if config cannot be loaded
@@ -74,18 +76,23 @@ def mother_alarm_handler(httpClient, httpResponse):
             if 'mother_alarms' not in config or not isinstance(config['mother_alarms'], list):
                 config['mother_alarms'] = []
 
+            # Determine the value of 'ring' based on the mode
+            ring = False if mode == "Maintenance" else True
+
             # Create the new alarm entry
             new_alarm = {
                 'block_name': block_name,
                 'room': room,
                 'date': date,
                 'reference': reference,
-                'ring': True
+                'ring': ring,
+                'mode': mode
             }
 
             # Append the new alarm to the list
             config['mother_alarms'].append(new_alarm)
-              # Save the updated config back to the file
+
+            # Save the updated config back to the file
             try:
                 save_config(config)
                 print("New alarm added to 'mother_alarms' in config file.")
@@ -96,10 +103,6 @@ def mother_alarm_handler(httpClient, httpResponse):
                 print("Error updating config file:", e)
                 response_data = {'error': 'Failed to update configuration file.'}
                 httpResponse.WriteResponseInternalServerError(obj=response_data)
-
-            # Send a success response
-            response_data = {'message': 'Alarm received successfully'}
-            httpResponse.WriteResponseJSONOk(obj=response_data)
         else:
             # Missing 'block_name' or 'room' in the data
             response_data = {'error': 'Missing "block_name" or "room" in request data'}
@@ -107,7 +110,7 @@ def mother_alarm_handler(httpClient, httpResponse):
     else:
         # Invalid or missing JSON data
         response_data = {'error': 'Invalid or missing JSON data'}
-        httpResponse.WriteResponseBadRequest(obj=response_data)      
+        httpResponse.WriteResponseBadRequest(obj=response_data)    
 
 # Function to start the server
 def start_server():
