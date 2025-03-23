@@ -1,6 +1,7 @@
 import urequests
 import os
 import ujson  # Import ujson for JSON handling
+import machine  # Import machine module for resetting the ESP32
 
 class OTAUpdater:
     def __init__(self, ssid, password, firmware_url):
@@ -20,7 +21,8 @@ class OTAUpdater:
             print(f"New version available: {version_info['version']}")
             self._update_files(version_info["files"])
             self._set_current_version(version_info["version"])
-            print("Update complete.")
+            print("Update complete. Rebooting device...")
+            machine.reset()  # Reboot the ESP32
         else:
             print("No updates available.")
 
