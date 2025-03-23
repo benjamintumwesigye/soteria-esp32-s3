@@ -10,6 +10,5 @@ if config:
     ssid = config.get('ssid')
     password = config.get('password')
 
-    ota_updater = OTAUpdater(ssid, password, firmware_url, "test_file.py")
-
+    ota_updater = OTAUpdater(ssid, password, firmware_url)
     ota_updater.download_and_install_update_if_available()
