@@ -2,28 +2,31 @@ import network
 import ujson
 import time
 import uasyncio as asyncio
+from utils import load_config, save_config, verify_config
 
 wlan = network.WLAN(network.STA_IF)
 
 def connect_to_wifi():
     """
-    Connects to Wi-Fi using credentials from 'wifi_config.json'.
+    Connects to Wi-Fi using credentials from configuration.
     """
-    # Load Wi-Fi credentials
-    try:
-        with open('wifi_config.json', 'r') as f:
-            credentials = ujson.load(f)
-        ssid = credentials.get('ssid')
-        password = credentials.get('password')
-
-        if not ssid or not password:
-            print("Error: SSID or password is missing in the configuration.")
-            return False
-
-    except Exception as e:
-        print("Error reading Wi-Fi credentials:", e)
+    # Load configuration
+    config = load_config()
+    if not config:
+        print("Error: Failed to load configuration.")
         return False
-    
+
+    # Print current configuration for debugging
+    print("Current configuration:", config)
+
+    ssid = config.get('ssid')
+    password = config.get('password')
+
+    if not ssid or not password:
+        print("Error: SSID or password is missing in the configuration.")
+        print("SSID present:", bool(ssid))
+        print("Password present:", bool(password))
+        return False
     
     wlan.active(True)
 
@@ -47,6 +50,26 @@ def connect_to_wifi():
         if wlan.isconnected():
             print("Successfully connected to Wi-Fi!")
             print("Network configuration:", wlan.ifconfig())
+            
+            # Store old config for rollback
+            old_config = config.copy()
+            
+            # Update IP address in configuration
+            config['ip_address'] = wlan.ifconfig()[0]
+            
+            # Save and verify configuration
+            if save_config(config):
+                if verify_config():
+                    print("Updated IP address successfully")
+                else:
+                    # If verification fails, rollback
+                    print("Configuration verification failed, rolling back")
+                    if save_config(old_config):
+                        verify_config()
+                        print("Rolled back to previous configuration")
+            else:
+                print("Failed to save configuration")
+                
             return True
         time.sleep(1)
         max_wait -= 1

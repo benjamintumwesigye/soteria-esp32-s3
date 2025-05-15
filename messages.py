@@ -3,6 +3,7 @@
 import uasyncio as asyncio
 from lcd_utils import *
 import ujson
+from wifi_connect import is_connected
 
 # Create a lock for the LCD to prevent concurrent access
 lcd_lock = asyncio.Lock()
@@ -69,15 +70,16 @@ async def defaultDisplay():
             isMother = credentials.get('isMother')
             center_name = credentials.get('center_name')
             ip_address = credentials.get('ip_address')
+            conn_status = "ONLINE" if is_connected() else "OFFLINE"
 
         # Create asynchronous tasks for the two messages
         if not isMother:
             task1 = asyncio.create_task(display_message(block_name, clear_before=True))
-            task2 = asyncio.create_task(display_message(f"Room:{number_of_rooms}", allow_scroll=False, line=1))
+            task2 = asyncio.create_task(display_message(f"R:{number_of_rooms}", allow_scroll=False, line=1))
             await asyncio.gather(task1, task2)
         else:
             dis_task1 = asyncio.create_task(display_message(center_name, clear_before=True))
-            dis_task2 = asyncio.create_task(display_message(f"IP: {ip_address}", scroll_time=0.5, line=1))
+            dis_task2 = asyncio.create_task(display_message(f"Status: {conn_status}", scroll_time=0.5, line=1))
             await asyncio.gather(dis_task1, dis_task2)
         # Wait for both tasks to complete
         

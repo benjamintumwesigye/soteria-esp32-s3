@@ -7,8 +7,31 @@ from MicroWebSrv.microWebSrv import MicroWebSrv
 import uasyncio as asyncio
 from wifi_connect import get_ip
 from utils import *
+from machine import Pin
+from messages import defaultDisplay
+import uasyncio as asyncio
+
+SIREN_PIN = Pin(3, Pin.OUT)
 
 server_instance = None
+
+# Define a GET route handler for the configuration
+def alarm_off_handler(httpClient, httpResponse):
+    try:
+        SIREN_PIN.value(0)
+        reset_mother()
+        asyncio.create_task(defaultDisplay())
+        with open('wifi_config.json', 'r') as f:
+            config = f.read()
+        # Return the config as JSON
+        httpResponse.WriteResponseOk(
+            headers=None,
+            contentType="application/json",
+            contentCharset="UTF-8",
+            content=config
+        )
+    except Exception:
+        httpResponse.WriteResponseInternalServerError()
 
 # Define a GET route handler for the configuration
 def config_get_handler(httpClient, httpResponse):
@@ -22,28 +45,43 @@ def config_get_handler(httpClient, httpResponse):
             contentCharset="UTF-8",
             content=config
         )
-    except Exception as e:
-        print("Error reading config file:", e)
+    except Exception:
         httpResponse.WriteResponseInternalServerError()
 
 # Define a PUT route handler to update the configuration
 def config_put_handler(httpClient, httpResponse):
     # Get JSON payload from request
     content = httpClient.ReadRequestContentAsJSON()
-    print(content)
     if content:
         try:
-            # Write the content back to the config file
-            with open('wifi_config.json', 'w') as f:
-                ujson.dump(content, f)
-            httpResponse.WriteResponseOk(
-                headers=None,
-                contentType="application/json",
-                contentCharset="UTF-8",
-                content=ujson.dumps({"message": "Configuration updated successfully"})
-            )
-        except Exception as e:
-            print("Error writing to config file:", e)
+            # Load current config for rollback
+            config = load_config()
+            if not config:
+                httpResponse.WriteResponseInternalServerError()
+                return
+                
+            old_config = config.copy()
+            
+            # Update config with new values
+            config.update(content)
+            
+            # Save and verify configuration
+            if save_config(config):
+                if verify_config():
+                    httpResponse.WriteResponseOk(
+                        headers=None,
+                        contentType="application/json",
+                        contentCharset="UTF-8",
+                        content=ujson.dumps({"message": "Configuration updated successfully"})
+                    )
+                else:
+                    # If verification fails, rollback
+                    if save_config(old_config):
+                        verify_config()
+                    httpResponse.WriteResponseInternalServerError()
+            else:
+                httpResponse.WriteResponseInternalServerError()
+        except Exception:
             httpResponse.WriteResponseInternalServerError()
     else:
         # Bad request
@@ -57,50 +95,49 @@ def mother_alarm_handler(httpClient, httpResponse):
     if data:
         block_name = data.get('block_name')
         room = data.get('room')
-        date = data.get('date')
-        reference = data.get('reference')
-        mode = data.get('mode')
-
         if block_name and room:
-            print(f"Received alarm from Block: {block_name}, Room: {room}")
-
-            # Load the existing config
+            # Load current configuration
             config = load_config()
-            if config is None:
-                # Handle error if config cannot be loaded
+            if not config:
                 response_data = {'error': 'Failed to load configuration file.'}
                 httpResponse.WriteResponseInternalServerError(obj=response_data)
                 return
 
-            # Initialize 'mother_alarms' as a list if it doesn't exist
+            # Store old config for rollback
+            old_config = config.copy()
+
+            # Initialize mother_alarms if it doesn't exist
             if 'mother_alarms' not in config or not isinstance(config['mother_alarms'], list):
                 config['mother_alarms'] = []
 
-            # Determine the value of 'ring' based on the mode
-            ring = False if mode == "Maintenance" else True
-
-            # Create the new alarm entry
+            # Create new alarm entry
             new_alarm = {
                 'block_name': block_name,
                 'room': room,
-                'date': date,
-                'reference': reference,
-                'ring': ring,
-                'mode': mode
+                'date': data.get('date', ''),
+                'reference': data.get('reference', ''),
+                'mode': data.get('mode', '')
             }
 
-            # Append the new alarm to the list
+            # Add the new alarm to the list
             config['mother_alarms'].append(new_alarm)
 
-            # Save the updated config back to the file
-            try:
-                save_config(config)
-                print("New alarm added to 'mother_alarms' in config file.")
-                # Send a success response
-                response_data = {'message': 'Alarm received and saved successfully'}
-                httpResponse.WriteResponseJSONOk(obj=response_data)
-            except Exception as e:
-                print("Error updating config file:", e)
+            # Get machine code for response
+            machine_code = config.get('machine_code', '')
+
+            # Save and verify configuration
+            if save_config(config):
+                if verify_config():
+                    # Send a success response
+                    response_data = {'message': 'Alarm received and saved successfully', 'machine_code': machine_code}
+                    httpResponse.WriteResponseJSONOk(obj=response_data)
+                else:
+                    # If verification fails, rollback
+                    if save_config(old_config):
+                        verify_config()
+                    response_data = {'error': 'Failed to verify configuration.'}
+                    httpResponse.WriteResponseInternalServerError(obj=response_data)
+            else:
                 response_data = {'error': 'Failed to update configuration file.'}
                 httpResponse.WriteResponseInternalServerError(obj=response_data)
         else:
@@ -110,7 +147,46 @@ def mother_alarm_handler(httpClient, httpResponse):
     else:
         # Invalid or missing JSON data
         response_data = {'error': 'Invalid or missing JSON data'}
-        httpResponse.WriteResponseBadRequest(obj=response_data)    
+        httpResponse.WriteResponseBadRequest(obj=response_data)
+        
+        
+# Define the POST route handler for '/device/mode'
+def device_mode_handler(httpClient, httpResponse):
+    # Read the JSON data from the request
+    data = httpClient.ReadRequestContentAsJSON()
+    if data:
+        test_mode = data.get('test_mode')
+        # Load current configuration
+        config = load_config()
+        if not config:
+            response_data = {'error': 'Failed to load configuration file.'}
+            httpResponse.WriteResponseInternalServerError(obj=response_data)
+            return
+
+        # Store old config for rollback
+        old_config = config.copy()
+
+        # Update test mode
+        config['test_mode'] = test_mode
+
+        # Save and verify configuration
+        if save_config(config):
+            if verify_config():
+                response_data = {'message': 'Mode saved successfully'}
+                httpResponse.WriteResponseJSONOk(obj=response_data)
+            else:
+                # If verification fails, rollback
+                if save_config(old_config):
+                    verify_config()
+                response_data = {'error': 'Failed to verify configuration.'}
+                httpResponse.WriteResponseInternalServerError(obj=response_data)
+        else:
+            response_data = {'error': 'Failed to update configuration file.'}
+            httpResponse.WriteResponseInternalServerError(obj=response_data)
+    else:
+        # Invalid or missing JSON data
+        response_data = {'error': 'Invalid or missing JSON data'}
+        httpResponse.WriteResponseBadRequest(obj=response_data)
 
 # Function to start the server
 def start_server():
@@ -118,39 +194,45 @@ def start_server():
     config = load_config()
     
     if server_instance is not None:
-        print("Server is already running.")
         return server_instance
 
     # Connect to Wi-Fi
     ip_address = get_ip()
     if not ip_address:
-        print("Cannot start server without Wi-Fi connection.")
         if config:
+            # Store old config for rollback
+            old_config = config.copy()
             config['ip_address'] = ""
-            save_config(config)
-        else:
-            print("Failed to load config for updating IP address.")
+            
+            # Save and verify configuration
+            if save_config(config):
+                if not verify_config():
+                    if save_config(old_config):
+                        verify_config()
         return None
 
     # Update the config file with the ip_address
     if config:
+        # Store old config for rollback
+        old_config = config.copy()
         config['ip_address'] = ip_address
-        save_config(config)
-    else:
-        print("Failed to load config for updating IP address.")
+        
+        # Save and verify configuration
+        if save_config(config):
+            if not verify_config():
+                if save_config(old_config):
+                    verify_config()
 
     # Initialize the server with route handlers
     routeHandlers = [
+        ("/api/alarm/off", "GET", alarm_off_handler),
         ("/api/config", "GET", config_get_handler),
         ("/api/config", "PUT", config_put_handler),
-        ("/api/mother/alarm", "PUT", mother_alarm_handler)
+        ("/api/mother/alarm", "PUT", mother_alarm_handler),
+        ("/api/device/mode", "PUT", device_mode_handler)
     ]
     srv = MicroWebSrv(routeHandlers=routeHandlers)
     srv.Start(threaded=True)
-
-    print(f"Server started! Access GET endpoint at http://{ip_address}/api/config")
-    print(f"Server started! Access PUT endpoint at http://{ip_address}/api/config")
-    print(f"Server started! Access PUT endpoint at http://{ip_address}/api/mother/alarm")
 
     server_instance = srv  # Store the server instance
     return srv
@@ -158,4 +240,3 @@ def start_server():
 # Optional: Function to stop the server
 def stop_server(srv):
     srv.Stop()
-    print("Server stopped.")
